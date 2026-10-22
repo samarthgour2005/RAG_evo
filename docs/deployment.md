@@ -125,6 +125,20 @@ does not hold.
 | Storage | EBS gp3, mounted as a named volume, so **uploads survive a restart** and `STORAGE_EPHEMERAL` is legitimately `0` |
 | Queue | In-process worker thread. `/queue` reports `durable: false` rather than implying otherwise. |
 
+## Reproducing it on a fresh instance
+
+`docker-compose.yml` runs the API and Caddy together; `Caddyfile` and
+`.env.example` are the only other inputs.
+
+```bash
+cp .env.example .env && chmod 600 .env   # GROQ_API_KEY, ALLOWED_ORIGINS, API_DOMAIN
+docker compose up -d --build
+```
+
+The security group needs inbound 22 (your IP only), 80 and 443. Port 8000 is
+bound to localhost and stays closed. Locally, `docker compose up api` skips
+Caddy.
+
 ## Why HTTPS was not optional
 
 The frontend is served over HTTPS, and a page loaded over HTTPS cannot call an

@@ -8,11 +8,14 @@ services:
       target: runtime
     image: rag-evaluation-api:latest
     container_name: rag-api
+    # Bound to localhost: the public route is through Caddy below. Use
+    # `curl localhost:8000/health` on the box to bypass TLS when debugging.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    # GROQ_API_KEY, ALLOWED_ORIGINS and the optional knobs — see .env.example.
+    # Read at container start, so a key rotation needs `docker compose up -d`.
+    env_file: .env
     environment:
-      # Copy your Groq key into a local .env file — never commit it
-      GROQ_API_KEY: "${GROQ_API_KEY}"
       LOG_LEVEL: "INFO"
     volumes:
       # A named volume, not a read-only bind mount. The image already contains
@@ -32,7 +35,27 @@ services:
       retries: 3
       start_period: 15s
 
+  caddy:
+    image: caddy:2
+    container_name: rag-caddy
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMAIN: "${API_DOMAIN}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here; losing them on every restart would run into
+      # Let's Encrypt's rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
 volumes:
   # Uploads and the document database live here, so `docker compose down`
   # without `-v` keeps them.
   index:
+  caddy_data:
+  caddy_config:
