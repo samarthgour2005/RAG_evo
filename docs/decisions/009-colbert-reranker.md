@@ -24,9 +24,22 @@ default. Keep the cross-encoder as a selectable backend.
   both behind `BaseReranker`; `build_reranker()` picks one.
 - `RERANKER_BACKEND` (`colbert` | `cross-encoder`) selects it per deployment;
   `/config` and `/settings` report which one is live.
-- Reranking is index-free (`RAGPretrainedModel.rerank`): candidates are encoded
-  in memory per query. The FAISS index is untouched, and no ColBERT index is
-  built — at 20 candidates there is nothing for one to accelerate.
+- Passage token embeddings are computed once and cached by text: the corpus is
+  encoded when the reranker is first loaded, and chunks indexed later on first
+  use. A query then encodes only the question and runs MaxSim against the
+  cached matrices. The FAISS index is untouched, and no ColBERT search index is
+  built — ColBERT reranks, it does not retrieve.
+
+### Revision: why the cache exists
+
+The first version called RAGatouille's index-free `rerank()`, which re-encodes
+all 20 candidate passages on every query. Measured on a 4-core CI runner over
+the 53 questions (dense first stage), quality matched the cross-encoder (MRR
+0.916 vs 0.914) but the rerank stage was ~6× slower: p50 1467 ms against
+241 ms. ColBERTv2 is BERT-base (110 M parameters) against MiniLM-L-6's 22 M, so
+re-encoding passages per query forfeits exactly the advantage late interaction
+exists for. Caching the passage side restores it; scores are identical to
+`rerank()`'s.
 
 ## Why ColBERT
 
