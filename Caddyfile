@@ -1,0 +1,7 @@
+# TLS in front of the API. The Vercel front end is served over HTTPS, and a
+# browser blocks an HTTPS page from calling an HTTP API as mixed content, so
+# this is load-bearing. Caddy obtains and renews the certificate itself.
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy api:8000
+}
