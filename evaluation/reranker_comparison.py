@@ -310,6 +310,13 @@ def resume_bullets(comparison: Comparison, retriever: str = "dense") -> List[str
     return bullets
 
 
+def _direction(reduction_pct: float) -> str:
+    """ "40% faster" or "20% slower", never "-509% reduction"."""
+    if reduction_pct >= 0:
+        return f"{reduction_pct:.0f}% faster"
+    return f"{-reduction_pct:.0f}% slower"
+
+
 def to_markdown(comparison: Comparison) -> str:
     k = comparison.top_k
     lines = [
@@ -345,7 +352,7 @@ def to_markdown(comparison: Comparison) -> str:
     loads = {r.backend: r.load_seconds for r in comparison.results}
     lines += [
         "",
-        "Model load time: "
+        "Setup time (model load, plus ColBERT's one-off corpus encoding): "
         + ", ".join(f"{b} {s:.1f} s" for b, s in loads.items() if b != NO_RERANKER)
         + ".",
     ]
@@ -358,11 +365,11 @@ def to_markdown(comparison: Comparison) -> str:
             "",
             f"- Rerank latency p50: cross-encoder {h['rerank_p50_ce_ms']:.1f} ms → "
             f"ColBERT {h['rerank_p50_colbert_ms']:.1f} ms "
-            f"({h['rerank_p50_reduction_pct']:+.1f}% reduction, "
-            f"{h['speedup_p50']:.2f}×).",
+            f"({_direction(h['rerank_p50_reduction_pct'])}, "
+            f"{h['speedup_p50']:.2f}× the cross-encoder's speed).",
             f"- Rerank latency p95: {h['rerank_p95_ce_ms']:.1f} ms → "
             f"{h['rerank_p95_colbert_ms']:.1f} ms "
-            f"({h['rerank_p95_reduction_pct']:+.1f}% reduction).",
+            f"({_direction(h['rerank_p95_reduction_pct'])}).",
             f"- MRR: cross-encoder {h['mrr_ce']:.3f}, ColBERT {h['mrr_colbert']:.3f} "
             f"({h['mrr_retained_pct']:.1f}% retained).",
         ]
