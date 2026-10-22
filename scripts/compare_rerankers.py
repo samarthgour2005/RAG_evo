@@ -55,12 +55,17 @@ def main() -> None:
         # One first stage shared by every backend, so the only thing that
         # differs between rows is the reranker.
         reranker = None if backend == NO_RERANKER else build_reranker(backend)
-        return HybridRetriever(
+        retriever = HybridRetriever(
             dense=base._dense,
             bm25=base._bm25,
             candidate_multiplier=CANDIDATE_MULTIPLIER,
             reranker=reranker,
         )
+        if reranker is not None:
+            # Inside the timed load, so ColBERT's one-off corpus encoding is
+            # reported as setup cost rather than hidden from the comparison.
+            retriever.prepare_reranker()
+        return retriever
 
     comparison = run_comparison(
         make_retriever,

@@ -239,6 +239,19 @@ at a lower cost. The cross-encoder stays selectable with
 python scripts/compare_rerankers.py            # dense, sparse and hybrid; 3 timed passes
 ```
 
+Measured on a 4-core CI runner (dense first stage, top-5 from 20 candidates):
+
+| Reranker | MRR | Recall@5 | Rerank p50 | Rerank p95 |
+|---|---|---|---|---|
+| none | 0.878 | 0.962 | — | — |
+| cross-encoder | 0.914 | 0.981 | 206.7 ms | 350.6 ms |
+| **ColBERT** | **0.916** | 0.972 | **66.5 ms** | **68.3 ms** |
+
+Same quality, 3.1× faster at the median and 5× at p95. That depends on caching
+passage embeddings: re-encoding the candidates per query made ColBERT ~6×
+*slower* than the cross-encoder. Full table:
+[docs/reranker_comparison.md](docs/reranker_comparison.md).
+
 It runs the 53 labelled questions through no reranker, the cross-encoder and
 ColBERT over the same first-stage candidates, and writes
 `docs/reranker_comparison.md` (Precision@K, Recall@K, MRR, hit rate, p50/p95
