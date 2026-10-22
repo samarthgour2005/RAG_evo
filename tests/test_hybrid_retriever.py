@@ -135,3 +135,34 @@ class TestRRFFusion:
         results = hybrid.retrieve("q", top_k=5)
         chunk_ids = [r.chunk.chunk_id for r in results]
         assert len(chunk_ids) == len(set(chunk_ids))
+
+
+class TestRerankerWarmUp:
+    """A reranker that can precompute is handed the corpus once, before use."""
+
+    def _retriever(self, reranker):
+        from unittest.mock import MagicMock
+
+        from retrieval.hybrid_retriever import HybridRetriever
+
+        bm25 = MagicMock()
+        bm25._chunks = [MagicMock(text="a"), MagicMock(text="b")]
+        return HybridRetriever(dense=MagicMock(), bm25=bm25, reranker=reranker)
+
+    def test_warms_with_every_corpus_chunk_once(self):
+        from unittest.mock import MagicMock
+
+        reranker = MagicMock()
+        retriever = self._retriever(reranker)
+        retriever.prepare_reranker()
+        retriever.prepare_reranker()
+        reranker.warm.assert_called_once_with(["a", "b"])
+
+    def test_a_reranker_without_warm_is_left_alone(self):
+        class Plain:
+            pass
+
+        reranker = Plain()
+        retriever = self._retriever(reranker)
+        retriever.prepare_reranker()
+        assert retriever._get_reranker() is reranker

@@ -11,9 +11,9 @@ Two rerankers implement that second stage:
 * ``ColBERTReranker`` (default) — ColBERTv2 via RAGatouille. Query and passage
   are encoded *separately* into one vector per token, then scored by MaxSim:
   each query token takes its best-matching passage token and the maxima are
-  summed. Token-level matching keeps most of a cross-encoder's precision, but
-  the passage side is a plain BERT encode — no query concatenated onto every
-  passage, no attention across the pair — so it batches far better.
+  summed. Passages do not depend on the query, so their embeddings are
+  computed once and cached; a query costs one short encode plus a matrix
+  product per candidate.
 * ``CrossEncoderReranker`` — ms-marco-MiniLM-L-6 reads query and passage
   jointly, one forward pass per pair. The most precise of the two and the most
   expensive, which made it the latency bottleneck it was swapped out for.
@@ -23,15 +23,19 @@ cross-encoder stays selectable because the swap is only justified by measuring
 both on the same data — see ``scripts/compare_rerankers.py``.
 """
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import replace
-from typing import List, Literal, Sequence
+from typing import TYPE_CHECKING, Dict, List, Literal, Sequence
 
 from sentence_transformers import CrossEncoder
 
 from config.logging_config import get_logger
 from config.settings import COLBERT_MODEL, CROSS_ENCODER_MODEL, RERANKER_BACKEND
 from retrieval.ranking import RetrievalResult, StageScore
+
+if TYPE_CHECKING:  # pragma: no cover - torch is only imported where it is used
+    import torch
 
 logger = get_logger(__name__)
 
@@ -111,18 +115,31 @@ class CrossEncoderReranker(BaseReranker):
 class ColBERTReranker(BaseReranker):
     """ColBERTv2 late-interaction reranking through RAGatouille.
 
-    Index-free: RAGatouille encodes the candidates in memory for each query, so
-    nothing about the FAISS index changes and no ColBERT index is built. That is
-    the right trade at this candidate width (top-K × 4, i.e. 20 passages); a
-    ColBERT *index* only pays off when ColBERT is also the first-stage retriever.
+    Late interaction is what makes ColBERT cheap, and only if it is used as
+    designed: a passage's token embeddings do not depend on the query, so they
+    are computed once and reused. A query then costs one short BERT pass over
+    the question plus a MaxSim — a matrix product per candidate.
+
+    The first version called RAGatouille's index-free ``rerank()``, which
+    re-encodes every candidate passage on every query. Measured on CI that was
+    ~6× *slower* than the cross-encoder (BERT-base over 20 passages per query
+    against MiniLM's 20 pair passes), which is the opposite of the reason for
+    the swap. Passage embeddings are therefore cached by text: ``warm()``
+    encodes a corpus up front, and a candidate not yet seen (a freshly uploaded
+    chunk) is encoded on first use and kept.
 
     Usage
     -----
     >>> reranker = ColBERTReranker()
+    >>> reranker.warm([chunk.text for chunk in corpus])
     >>> reranked = reranker.rerank(query, initial_results, top_k=5)
     """
 
     backend = "colbert"
+
+    #: Upper bound on cached passages. ~70 tokens × 128 dims × 4 bytes ≈ 36 KB
+    #: each, so the cap is ~700 MB at worst; the benchmark corpus is 148.
+    max_cached = 20_000
 
     def __init__(self, model_name: str = COLBERT_MODEL, model=None) -> None:
         if model is None:
@@ -136,7 +153,46 @@ class ColBERTReranker(BaseReranker):
             model = RAGPretrainedModel.from_pretrained(model_name, n_gpu=0, verbose=0)
         self._model = model
         self._model_name = model_name
+        # Insertion-ordered, so eviction drops the oldest passage first.
+        self._passages: Dict[str, "torch.Tensor"] = {}
         logger.info("ColBERTReranker ready (model=%s)", model_name)
+
+    # -- encoding: the only two places that touch colbert-ai ----------------
+
+    def _encode_passages(self, texts: List[str]) -> List["torch.Tensor"]:
+        """One [tokens, dim] tensor per passage, padding removed."""
+        colbert = self._model.model
+        # Fixes the document length budget once, from the passages it sees;
+        # a no-op after the first call.
+        colbert._set_inference_max_tokens(documents=texts)
+        embedded, *_ = colbert.inference_ckpt.docFromText(
+            texts, bsize=32, keep_dims=False
+        )
+        return list(embedded)
+
+    def _encode_query(self, query: str) -> "torch.Tensor":
+        """[query tokens, dim] for one question."""
+        (embedded,) = self._model.model._encode_index_free_queries(query)
+        return embedded[0]
+
+    # -----------------------------------------------------------------------
+
+    def warm(self, texts: Sequence[str]) -> None:
+        """Encode passages ahead of the first query that needs them."""
+        missing = list(dict.fromkeys(t for t in texts if t not in self._passages))
+        if not missing:
+            return
+        t0 = time.perf_counter()
+        for text, emb in zip(missing, self._encode_passages(missing)):
+            self._passages[text] = emb
+        while len(self._passages) > self.max_cached:
+            self._passages.pop(next(iter(self._passages)))
+        logger.info(
+            "ColBERT encoded %d passage(s) in %.0f ms (%d cached)",
+            len(missing),
+            (time.perf_counter() - t0) * 1000,
+            len(self._passages),
+        )
 
     def rerank(
         self, query: str, results: List[RetrievalResult], top_k: int
@@ -144,18 +200,26 @@ class ColBERTReranker(BaseReranker):
         if not results:
             return []
 
-        ranked = self._model.rerank(
-            query=query,
-            documents=[r.chunk.text for r in results],
-            k=len(results),
-        )
-        # `result_index` points back into the documents list, so two chunks
-        # with identical text cannot be confused for one another the way
-        # matching on `content` would. A candidate RAGatouille did not return
-        # scores lowest rather than vanishing.
-        scores = [float("-inf")] * len(results)
-        for hit in ranked:
-            scores[hit["result_index"]] = float(hit["score"])
+        import torch
+
+        texts = [r.chunk.text for r in results]
+        self.warm(texts)
+        q = self._encode_query(query)
+        with torch.inference_mode():
+            # MaxSim: each query token keeps its best-matching passage token,
+            # and the maxima are summed. The clamp reproduces RAGatouille's
+            # rerank() exactly: it scores zero-padded passages, so a padding
+            # token (similarity 0) is always a candidate maximum. Same scores,
+            # without re-encoding the passage to get them.
+            scores = [
+                float(
+                    (self._passages[t] @ q.to(self._passages[t].dtype).T)
+                    .max(dim=0)
+                    .values.clamp(min=0)
+                    .sum()
+                )
+                for t in texts
+            ]
         reranked = _ranked(results, scores, top_k)
 
         logger.info(

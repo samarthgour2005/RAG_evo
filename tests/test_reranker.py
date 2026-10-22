@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import torch
 
 from chunking.chunk import Chunk
 from retrieval.ranking import RetrievalResult
@@ -105,25 +106,35 @@ class TestCrossEncoderReranker:
 
 
 # ---------------------------------------------------------------------------
-# ColBERTReranker (mocked RAGatouille model)
+# ColBERTReranker (encoders stubbed with hand-made token embeddings)
 # ---------------------------------------------------------------------------
 
+# Two-dimensional "token embeddings" so MaxSim can be checked by hand. The
+# query has two tokens, [1, 0] and [0, 1].
+_QUERY = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+_PASSAGES = {
+    "This is passage number 0.": torch.tensor([[0.7, 0.0], [0.0, 0.5]]),  # 1.2
+    "This is passage number 1.": torch.tensor([[0.3, 0.1], [0.1, 0.2]]),  # 0.5
+    "This is passage number 2.": torch.tensor([[0.9, 0.0], [0.0, 0.9]]),  # 1.8
+}
 
-def _ragatouille_output(scores):
-    """RAGatouille's rerank() shape: best first, `result_index` into the input."""
-    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    return [
-        {"content": f"text {i}", "score": scores[i], "rank": r + 1, "result_index": i}
-        for r, i in enumerate(order)
-    ]
+
+class _StubColBERT(ColBERTReranker):
+    def __init__(self):
+        super().__init__(model_name="stub", model=MagicMock())
+        self.encoded: list[list[str]] = []
+
+    def _encode_passages(self, texts):
+        self.encoded.append(list(texts))
+        return [_PASSAGES[t] for t in texts]
+
+    def _encode_query(self, query):
+        return _QUERY
 
 
 @pytest.fixture
 def colbert():
-    model = MagicMock()
-    # Passage 2 most relevant, then 0, then 1 — same shape as the cross-encoder.
-    model.rerank.return_value = _ragatouille_output([17.0, 9.5, 23.1])
-    return ColBERTReranker(model_name="mock-colbert", model=model)
+    return _StubColBERT()
 
 
 class TestColBERTReranker:
@@ -131,36 +142,45 @@ class TestColBERTReranker:
         assert isinstance(colbert, BaseReranker)
         assert colbert.backend == "colbert"
 
-    def test_reranks_by_maxsim_score(self, colbert):
-        results = [_result(0), _result(1), _result(2)]
-        reranked = colbert.rerank("query", results, top_k=3)
+    def test_reranks_by_maxsim(self, colbert):
+        reranked = colbert.rerank("q", [_result(0), _result(1), _result(2)], top_k=3)
         assert [r.chunk.chunk_id for r in reranked] == [
             "chunk_2",
             "chunk_0",
             "chunk_1",
         ]
+        assert [r.score for r in reranked] == pytest.approx([1.8, 1.2, 0.5])
         assert [r.rank for r in reranked] == [1, 2, 3]
-        assert reranked[0].score == pytest.approx(23.1)
 
     def test_top_k_limits_output(self, colbert):
-        reranked = colbert.rerank("query", [_result(i) for i in range(3)], top_k=2)
+        reranked = colbert.rerank("q", [_result(i) for i in range(3)], top_k=2)
         assert len(reranked) == 2
 
-    def test_scores_every_candidate(self, colbert):
-        """k is the candidate count, so nothing is dropped before top_k applies."""
+    def test_passages_are_encoded_once(self, colbert):
+        """The point of the cache: a second query encodes no passage."""
         results = [_result(i) for i in range(3)]
-        colbert.rerank("what is this?", results, top_k=1)
-        kwargs = colbert._model.rerank.call_args.kwargs
-        assert kwargs["query"] == "what is this?"
-        assert kwargs["documents"] == [r.chunk.text for r in results]
-        assert kwargs["k"] == 3
+        colbert.rerank("first", results, top_k=3)
+        colbert.rerank("second", results, top_k=3)
+        assert colbert.encoded == [[r.chunk.text for r in results]]
 
-    def test_identical_texts_stay_distinct(self):
-        """Matched by result_index, not by content, so duplicates are not merged."""
-        model = MagicMock()
-        model.rerank.return_value = _ragatouille_output([1.0, 5.0])
-        reranker = ColBERTReranker(model_name="m", model=model)
-        a, b = _result(0), _result(1)
+    def test_warm_precomputes_and_skips_known_passages(self, colbert):
+        colbert.warm([_result(0).chunk.text, _result(1).chunk.text])
+        colbert.rerank("q", [_result(0), _result(1), _result(2)], top_k=3)
+        assert colbert.encoded == [
+            [_result(0).chunk.text, _result(1).chunk.text],
+            [_result(2).chunk.text],
+        ]
+
+    def test_cache_is_bounded(self, colbert):
+        colbert.max_cached = 2
+        colbert.warm([_result(i).chunk.text for i in range(3)])
+        assert list(colbert._passages) == [
+            _result(1).chunk.text,
+            _result(2).chunk.text,
+        ]
+
+    def test_identical_texts_stay_distinct_results(self, colbert):
+        a = _result(0)
         b = RetrievalResult(
             chunk=Chunk(
                 chunk_id="chunk_dup",
@@ -172,17 +192,32 @@ class TestColBERTReranker:
             score=0.1,
             rank=2,
         )
-        reranked = reranker.rerank("q", [a, b], top_k=2)
-        assert [r.chunk.chunk_id for r in reranked] == ["chunk_dup", "chunk_0"]
+        reranked = colbert.rerank("q", [a, b], top_k=2)
+        assert {r.chunk.chunk_id for r in reranked} == {"chunk_0", "chunk_dup"}
+
+    def test_negative_similarities_score_as_padding(self, colbert):
+        """Matches RAGatouille, whose zero padding makes 0 a floor per token."""
+        _PASSAGES["neg"] = torch.tensor([[-0.5, -0.5]])
+        try:
+            r = RetrievalResult(
+                chunk=Chunk(
+                    chunk_id="n", document_id="d", text="neg", start_char=0, end_char=3
+                ),
+                score=0.0,
+                rank=1,
+            )
+            assert colbert.rerank("q", [r], top_k=1)[0].score == 0.0
+        finally:
+            del _PASSAGES["neg"]
 
     def test_records_reranker_stage_in_trace(self, colbert):
-        reranked = colbert.rerank("query", [_result(i) for i in range(3)], top_k=3)
+        reranked = colbert.rerank("q", [_result(i) for i in range(3)], top_k=3)
         assert reranked[0].trace.reranker.rank == 1
-        assert reranked[0].trace.reranker.score == pytest.approx(23.1)
+        assert reranked[0].trace.reranker.score == pytest.approx(1.8)
 
     def test_empty_input_returns_empty(self, colbert):
-        assert colbert.rerank("query", [], top_k=5) == []
-        colbert._model.rerank.assert_not_called()
+        assert colbert.rerank("q", [], top_k=5) == []
+        assert colbert.encoded == []
 
     def test_loads_through_ragatouille(self):
         fake = MagicMock()
@@ -192,6 +227,21 @@ class TestColBERTReranker:
             "colbert-ir/colbertv2.0", n_gpu=0, verbose=0
         )
         assert reranker._model is fake.RAGPretrainedModel.from_pretrained.return_value
+
+    def test_encoders_call_colbert(self):
+        model = MagicMock()
+        model.model.inference_ckpt.docFromText.return_value = (["e0", "e1"],)
+        model.model._encode_index_free_queries.return_value = [torch.zeros(1, 3, 2)]
+        reranker = ColBERTReranker(model_name="m", model=model)
+
+        assert reranker._encode_passages(["a", "b"]) == ["e0", "e1"]
+        model.model._set_inference_max_tokens.assert_called_once_with(
+            documents=["a", "b"]
+        )
+        model.model.inference_ckpt.docFromText.assert_called_once_with(
+            ["a", "b"], bsize=32, keep_dims=False
+        )
+        assert reranker._encode_query("q").shape == (3, 2)
 
 
 class TestBuildReranker:

@@ -64,6 +64,7 @@ class HybridRetriever:
         self._candidate_multiplier = candidate_multiplier
         self._reranker = reranker
         self._reranker_factory = reranker_factory
+        self._reranker_warmed = False
 
     # ------------------------------------------------------------------
     # Factory
@@ -128,15 +129,29 @@ class HybridRetriever:
     # ------------------------------------------------------------------
 
     def _get_reranker(self):
-        """Build the reranker on first use.
+        """Build the reranker on first use, and prepare it for this corpus.
 
         Constructing it downloads and loads a model, so a deployment that never
         asks for reranking never pays that cost.
+
+        A reranker that can precompute passage state (ColBERT's token
+        embeddings) is handed the whole corpus here, once, so no query pays to
+        encode a passage — that precomputation is where late interaction gets
+        its speed. Chunks indexed later are encoded on first use instead.
         """
         if self._reranker is None:
             factory = self._reranker_factory or _default_reranker
             self._reranker = factory()
+        if not self._reranker_warmed:
+            warm = getattr(self._reranker, "warm", None)
+            if callable(warm):
+                warm([c.text for c in self._bm25._chunks])
+            self._reranker_warmed = True
         return self._reranker
+
+    def prepare_reranker(self) -> None:
+        """Load the reranker and precompute what it can, ahead of any query."""
+        self._get_reranker()
 
     def retrieve(
         self,
