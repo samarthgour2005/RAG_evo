@@ -1,0 +1,315 @@
+import json
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Generator, List, Optional
+
+from config.logging_config import get_logger
+from config.settings import TOP_K
+from generation.generator import BaseGenerator
+from generation.prompt_builder import PromptBuilder, is_abstention
+from retrieval.pipeline import PipelineStage, fill_skipped
+from retrieval.ranking import RetrievalResult, RetrieverMode
+from retrieval.retriever import Retriever
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class RAGResponse:
+    answer: str
+    sources: List[RetrievalResult]
+    retrieval_latency_ms: float
+    generation_latency_ms: float
+    request_id: str
+    #: True when the model declined for lack of grounding, per the prompt's
+    #: own contract. Distinct from an empty answer, and from a bad answer.
+    abstained: bool = False
+    #: Every stage in canonical order, including the ones that did not run.
+    pipeline: List[PipelineStage] = field(default_factory=list)
+    #: Which strategy ran. Without it a null stage in a chunk's trace is
+    #: ambiguous: "sparse did not run" and "sparse missed this chunk" look
+    #: identical from the chunk alone.
+    retriever: RetrieverMode = "dense"
+
+
+@dataclass
+class _ServiceMetrics:
+    total_queries: int = field(default=0)
+    total_retrieval_ms: float = field(default=0.0)
+    total_generation_ms: float = field(default=0.0)
+    errors: int = field(default=0)
+
+    @property
+    def avg_retrieval_ms(self) -> float:
+        return (
+            self.total_retrieval_ms / self.total_queries if self.total_queries else 0.0
+        )
+
+    @property
+    def avg_generation_ms(self) -> float:
+        return (
+            self.total_generation_ms / self.total_queries if self.total_queries else 0.0
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "total_queries": self.total_queries,
+            "avg_retrieval_ms": round(self.avg_retrieval_ms, 1),
+            "avg_generation_ms": round(self.avg_generation_ms, 1),
+            "errors": self.errors,
+        }
+
+
+def _stage_payload(stage) -> Optional[dict]:
+    return None if stage is None else {"score": stage.score, "rank": stage.rank}
+
+
+def source_payload(result: RetrievalResult) -> dict:
+    """Wire form of one retrieved chunk, including its per-stage trace.
+
+    Shared by the streaming and non-streaming paths so the two cannot describe
+    the same chunk differently. `text` is included because the retrieval table
+    has to show what was retrieved; an id alone is not inspectable.
+    """
+    return {
+        "document_id": result.chunk.document_id,
+        "chunk_id": result.chunk.chunk_id,
+        "score": round(result.score, 4),
+        "rank": result.rank,
+        "text": result.chunk.text,
+        "metadata": result.chunk.metadata,
+        "scores": {
+            "dense": _stage_payload(result.trace.dense),
+            "sparse": _stage_payload(result.trace.sparse),
+            "fused": _stage_payload(result.trace.fused),
+            "reranker": _stage_payload(result.trace.reranker),
+        },
+    }
+
+
+class RAGService:
+    """Orchestrates retrieval + prompt building + LLM generation.
+
+    Owns no I/O — all I/O is delegated to injected components, which makes
+    the service trivially testable with mock dependencies.
+    """
+
+    def __init__(
+        self,
+        retriever: Retriever,
+        generator: BaseGenerator,
+        builder: PromptBuilder,
+        default_top_k: int = TOP_K,
+    ) -> None:
+        self._retriever = retriever
+        self._generator = generator
+        self._builder = builder
+        self._default_top_k = default_top_k
+        self._metrics = _ServiceMetrics()
+
+    # ------------------------------------------------------------------
+    # Core operation
+    # ------------------------------------------------------------------
+
+    def answer(
+        self,
+        question: str,
+        top_k: Optional[int] = None,
+        retriever: RetrieverMode = "dense",
+        reranker: bool = False,
+    ) -> RAGResponse:
+        request_id = str(uuid.uuid4())
+        k = top_k if top_k is not None else self._default_top_k
+
+        try:
+            t0 = time.perf_counter()
+            results, retrieval_stages = self._retriever.retrieve_traced(
+                question, top_k=k, mode=retriever, reranker=reranker
+            )
+            retrieval_ms = (time.perf_counter() - t0) * 1000
+
+            prompt = self._builder.build(question, results)
+            response = self._generator.generate(prompt, results)
+
+            self._metrics.total_queries += 1
+            self._metrics.total_retrieval_ms += retrieval_ms
+            self._metrics.total_generation_ms += response.latency_ms
+        except Exception:
+            self._metrics.errors += 1
+            raise
+
+        logger.info(
+            json.dumps(
+                {
+                    "event": "query",
+                    "request_id": request_id,
+                    "retriever": retriever,
+                    "question_len": len(question),
+                    "chunks_retrieved": len(results),
+                    "retrieval_ms": round(retrieval_ms, 1),
+                    "generation_ms": round(response.latency_ms, 1),
+                    "total_ms": round(retrieval_ms + response.latency_ms, 1),
+                    "tokens": response.total_tokens,
+                }
+            )
+        )
+
+        return RAGResponse(
+            answer=response.answer,
+            sources=results,
+            retrieval_latency_ms=retrieval_ms,
+            generation_latency_ms=response.latency_ms,
+            request_id=request_id,
+            retriever=retriever,
+            abstained=is_abstention(response.answer),
+            pipeline=fill_skipped(
+                [
+                    *retrieval_stages,
+                    PipelineStage(
+                        name="generation",
+                        status="ok",
+                        latency_ms=response.latency_ms,
+                        candidates_in=len(results),
+                        # Generation emits prose, not a shortlist.
+                        candidates_out=None,
+                    ),
+                ]
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Streaming
+    # ------------------------------------------------------------------
+
+    def stream(
+        self,
+        question: str,
+        top_k: Optional[int] = None,
+        retriever: RetrieverMode = "dense",
+        reranker: bool = False,
+    ) -> Generator[dict, None, None]:
+        """Yield SSE-ready event dicts: sources → tokens → done.
+
+        The 'done' event carries the same request_id and latency breakdown that
+        answer() returns. Without it a streamed query is untraceable — the id in
+        the logs would have nothing to join against on the client — and the
+        latency this platform exists to report would be missing from the path
+        the UI actually uses.
+
+        It also carries time-to-first-token, which only the streaming path can
+        measure and which is the number a user actually experiences: an answer
+        that starts in 200 ms and finishes in 3 s feels faster than one that
+        appears whole at 1.5 s.
+        """
+        request_id = str(uuid.uuid4())
+        k = top_k if top_k is not None else self._default_top_k
+
+        try:
+            t0 = time.perf_counter()
+            results, retrieval_stages = self._retriever.retrieve_traced(
+                question, top_k=k, mode=retriever, reranker=reranker
+            )
+            retrieval_ms = (time.perf_counter() - t0) * 1000
+
+            yield {"type": "sources", "data": [source_payload(r) for r in results]}
+
+            prompt = self._builder.build(question, results)
+
+            generation_start = time.perf_counter()
+            first_token_ms = None
+            token_count = 0
+            # Kept so the closing event can report abstention. The client
+            # reassembles the same string, but having the server decide keeps
+            # one definition of what an abstention is.
+            answer_parts: list[str] = []
+            for token in self._generator.stream(prompt, results):
+                if first_token_ms is None:
+                    first_token_ms = (time.perf_counter() - generation_start) * 1000
+                token_count += 1
+                answer_parts.append(token)
+                yield {"type": "token", "data": token}
+            generation_ms = (time.perf_counter() - generation_start) * 1000
+
+            self._metrics.total_queries += 1
+            self._metrics.total_retrieval_ms += retrieval_ms
+            self._metrics.total_generation_ms += generation_ms
+        except Exception:
+            # Counted here as well as in answer(); a platform that reports
+            # total_queries while ignoring every streamed one is misreporting.
+            self._metrics.errors += 1
+            raise
+
+        logger.info(
+            json.dumps(
+                {
+                    "event": "stream",
+                    "request_id": request_id,
+                    "retriever": retriever,
+                    "question_len": len(question),
+                    "chunks_retrieved": len(results),
+                    "retrieval_ms": round(retrieval_ms, 1),
+                    "generation_ms": round(generation_ms, 1),
+                    "first_token_ms": (
+                        round(first_token_ms, 1) if first_token_ms is not None else None
+                    ),
+                    "total_ms": round(retrieval_ms + generation_ms, 1),
+                    "tokens": token_count,
+                }
+            )
+        )
+
+        yield {
+            "type": "done",
+            "data": {
+                "request_id": request_id,
+                "retriever": retriever,
+                "abstained": is_abstention("".join(answer_parts)),
+                "retrieval_latency_ms": round(retrieval_ms, 1),
+                "generation_latency_ms": round(generation_ms, 1),
+                "total_latency_ms": round(retrieval_ms + generation_ms, 1),
+                # None when the model produced no tokens at all, which is a
+                # different situation from "arrived instantly".
+                "first_token_latency_ms": (
+                    round(first_token_ms, 1) if first_token_ms is not None else None
+                ),
+                "pipeline": [
+                    stage.as_dict()
+                    for stage in fill_skipped(
+                        [
+                            *retrieval_stages,
+                            PipelineStage(
+                                name="generation",
+                                status="ok",
+                                latency_ms=generation_ms,
+                                candidates_in=len(results),
+                                candidates_out=None,
+                            ),
+                        ]
+                    )
+                ],
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # Metrics
+    # ------------------------------------------------------------------
+
+    @property
+    def retriever(self):
+        """The retriever, for callers that evaluate it directly.
+
+        Evaluation drives the retriever without the generator — measuring
+        retrieval quality must not cost an LLM call.
+        """
+        return self._retriever
+
+    def corpus_size(self) -> int:
+        """Indexed chunks, asked of the retriever rather than recounted here."""
+        return getattr(self._retriever, "corpus_size", lambda: 0)()
+
+    def document_count(self) -> int:
+        return getattr(self._retriever, "document_count", lambda: 0)()
+
+    def get_metrics(self) -> dict:
+        return self._metrics.as_dict()
