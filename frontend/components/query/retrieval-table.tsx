@@ -37,7 +37,7 @@ const STAGE_UNITS: Record<StageKey, string> = {
   dense: "cosine similarity",
   sparse: "BM25 score",
   fused: "reciprocal rank fusion sum",
-  reranker: "cross-encoder relevance score",
+  reranker: "reranker relevance score (ColBERT MaxSim by default)",
 };
 
 /**
@@ -83,8 +83,8 @@ export function RetrievalTable({
             </>
           ) : null}{" "}
           {reranked
-            ? "Rows are in the cross-encoder's order; the earlier stages show where each chunk started."
-            : "The cross-encoder reranker did not run, so no stage is shown for it."}
+            ? "Rows are in the reranker's order; the earlier stages show where each chunk started."
+            : "The reranker did not run, so no stage is shown for it."}
         </TableCaption>
         <TableHeader>
           <TableRow>

@@ -55,9 +55,10 @@ class QueryRequest(BaseModel):
     reranker: bool = Field(
         default=False,
         description=(
-            "Run the cross-encoder over the retrieved candidates. Far more accurate "
-            "per candidate and far slower — one model forward pass each — so it is "
-            "opt-in and the retriever fetches a wider candidate list when it is on."
+            "Run the second-stage reranker (ColBERT by default, see /config) over the "
+            "retrieved candidates. More accurate per candidate and slower than "
+            "first-stage retrieval, so it is opt-in and the retriever fetches a "
+            "wider candidate list when it is on."
         ),
     )
     retriever: Literal["dense", "sparse", "hybrid"] = Field(
@@ -102,7 +103,7 @@ class SourceScores(BaseModel):
         default=None, description="Reciprocal Rank Fusion"
     )
     reranker: Optional[StageScore] = Field(
-        default=None, description="Cross-encoder rerank"
+        default=None, description="Second-stage rerank (ColBERT or cross-encoder)"
     )
 
 
@@ -160,7 +161,7 @@ class PipelineStageInfo(BaseModel):
     """What one stage of the pipeline did.
 
     `skipped` means the stage did not run — a sparse-only query embeds nothing,
-    and the cross-encoder reranker is not wired into the live path. The product
+    and the reranker runs only when a request opts in. The product
     spec requires these to render differently from stages that ran, and the
     diagram must never animate one that did not.
 
@@ -266,11 +267,16 @@ class ConfigResponse(BaseModel):
     indexed_chunks: int = Field(description="Chunks in the index")
     documents: int = Field(description="Distinct source documents behind them")
     reranker_enabled: bool = Field(
-        description="Whether the cross-encoder runs by default; it does not, because it "
+        description="Whether the reranker runs by default; it does not, because it "
         "costs hundreds of milliseconds for a small MRR gain"
     )
     reranker_available: bool = Field(
-        default=True, description="Whether a request may switch the cross-encoder on"
+        default=True, description="Whether a request may switch the reranker on"
+    )
+    reranker_backend: str = Field(
+        default="colbert",
+        description="Which reranker a request with reranker=true runs: 'colbert' "
+        "(late interaction via RAGatouille) or 'cross-encoder'",
     )
     default_retriever: str = Field(
         default="dense", description="Strategy used when a request does not choose one"

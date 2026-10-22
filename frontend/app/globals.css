@@ -11,10 +11,9 @@
    names and never a literal, so a page cannot drift from the rest of the
    product by hard-coding a grey.
 
-   The palette is dark-first: the dark values are the designed ones and the
-   light set is built to match them, not derived by inverting. Inverting a dark
-   palette produces muddy mid-greys and an accent that no longer has enough
-   contrast against white.
+   The palette is light-first, with a dark set designed alongside it rather
+   than derived by inverting. Inverting produces muddy mid-greys and an accent
+   that no longer has enough contrast against its ground.
 
    Colour carries meaning here rather than decoration:
      emerald  the primary action, and "healthy / ready / indexed"
@@ -97,60 +96,65 @@
 }
 
 /* --------------------------------------------------------------------------
-   Light. Built against the dark set rather than inverted from it.
+   Light — the default appearance.
+
+   An airy ground (#f8fafc) with white cards on it, so a panel reads as a panel
+   without a heavy border; text is a soft slate rather than near-black, which
+   is easier on a page that is mostly numbers. Foreground, muted and subtle
+   text all clear WCAG AA (4.5:1) against both the ground and a card.
 -------------------------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #0b0f14;
-  --surface: #f7f9fa;
+  --background: #f8fafc;
+  --foreground: #1e293b;
+  --surface: #f1f5f9;
   --elevated: #ffffff;
 
   --card: #ffffff;
-  --card-foreground: #0b0f14;
+  --card-foreground: #1e293b;
   --popover: #ffffff;
-  --popover-foreground: #0b0f14;
+  --popover-foreground: #1e293b;
 
   /* Primary is the emerald action, not a neutral: a developer tool has few
      primary buttons and they should be findable. */
   --primary: #047857;
   --primary-foreground: #ffffff;
-  --secondary: #f1f4f6;
-  --secondary-foreground: #1f2933;
+  --secondary: #eef2f6;
+  --secondary-foreground: #1e293b;
 
-  --muted: #f1f4f6;
-  --muted-foreground: #5b6672;
-  --subtle-foreground: #7b8695;
+  --muted: #eef2f6;
+  --muted-foreground: #526070;
+  --subtle-foreground: #626e7e;
 
-  --accent: #f1f4f6;
-  --accent-foreground: #0b0f14;
+  --accent: #ecf7f3;
+  --accent-foreground: #0f3d2e;
 
   --success: #15803d;
   --success-foreground: #ffffff;
-  --success-subtle: #e8f5ec;
+  --success-subtle: #ecf8f0;
   --warning: #b45309;
   --warning-foreground: #ffffff;
-  --warning-subtle: #fdf3e3;
+  --warning-subtle: #fef6e7;
   --destructive: #b42318;
   --destructive-foreground: #ffffff;
-  --destructive-subtle: #fdeceb;
+  --destructive-subtle: #fef0ef;
   --info: #1d4ed8;
   --info-foreground: #ffffff;
-  --info-subtle: #eaf0fe;
+  --info-subtle: #eef3ff;
 
-  --border: #e3e8ef;
-  --border-strong: #cfd7e2;
-  --input: #d8dfe8;
+  --border: #e6ebf1;
+  --border-strong: #d3dbe5;
+  --input: #d3dbe5;
   --ring: #047857;
 
   --radius: 8px;
 
-  --sidebar: #f7f9fa;
-  --sidebar-foreground: #0b0f14;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1e293b;
   --sidebar-primary: #047857;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eaeef2;
-  --sidebar-accent-foreground: #0b0f14;
-  --sidebar-border: #e3e8ef;
+  --sidebar-accent: #ecf7f3;
+  --sidebar-accent-foreground: #0f3d2e;
+  --sidebar-border: #e6ebf1;
   --sidebar-ring: #047857;
 
   /* Charts. Each series keeps its meaning across every page: precision is
@@ -164,58 +168,61 @@
 }
 
 /* --------------------------------------------------------------------------
-   Dark — the primary appearance.
+   Dark — opt-in from the theme toggle.
+
+   Slate rather than near-black: the ground sits at #111827, so cards and
+   borders separate by lightness instead of by hairlines on a void.
 -------------------------------------------------------------------------- */
 .dark {
-  --background: #080b10;
-  --foreground: #f3f4f6;
-  --surface: #0d1218;
-  --elevated: #141a22;
+  --background: #111827;
+  --foreground: #f1f5f9;
+  --surface: #151e2d;
+  --elevated: #1f2937;
 
-  --card: #10151c;
-  --card-foreground: #f3f4f6;
-  --popover: #141a22;
-  --popover-foreground: #f3f4f6;
+  --card: #182234;
+  --card-foreground: #f1f5f9;
+  --popover: #1f2937;
+  --popover-foreground: #f1f5f9;
 
   --primary: #10b981;
   --primary-foreground: #04140e;
-  --secondary: #161d26;
+  --secondary: #1f2a3c;
   --secondary-foreground: #e5e7eb;
 
-  --muted: #161d26;
-  --muted-foreground: #9ca3af;
-  --subtle-foreground: #667085;
+  --muted: #1f2a3c;
+  --muted-foreground: #a3adbb;
+  --subtle-foreground: #808b9c;
 
-  --accent: #182029;
-  --accent-foreground: #f3f4f6;
+  --accent: #22304a;
+  --accent-foreground: #f1f5f9;
 
   --success: #22c55e;
   --success-foreground: #04140b;
-  --success-subtle: #0e2417;
+  --success-subtle: #133222;
   --warning: #f59e0b;
   --warning-foreground: #1a1204;
-  --warning-subtle: #2a1f07;
+  --warning-subtle: #36290c;
   --destructive: #ef4444;
   --destructive-foreground: #1a0606;
-  --destructive-subtle: #2a1110;
+  --destructive-subtle: #3a1817;
   --info: #60a5fa;
   --info-foreground: #05101f;
-  --info-subtle: #0e1c2e;
+  --info-subtle: #15273f;
 
-  --border: #202833;
-  --border-strong: #2c3644;
-  --input: #2c3644;
-  /* Brighter than the border so focus is never ambiguous on a near-black
-     ground, and not the accent, so focus and "primary" stay distinguishable. */
+  --border: #2a3648;
+  --border-strong: #374559;
+  --input: #374559;
+  /* Brighter than the border so focus is never ambiguous on a dark ground,
+     and not the accent, so focus and "primary" stay distinguishable. */
   --ring: #5eead4;
 
-  --sidebar: #0a0e13;
-  --sidebar-foreground: #f3f4f6;
+  --sidebar: #0f1623;
+  --sidebar-foreground: #f1f5f9;
   --sidebar-primary: #10b981;
   --sidebar-primary-foreground: #04140e;
-  --sidebar-accent: #161d26;
-  --sidebar-accent-foreground: #f3f4f6;
-  --sidebar-border: #1a212b;
+  --sidebar-accent: #1f2a3c;
+  --sidebar-accent-foreground: #f1f5f9;
+  --sidebar-border: #233042;
   --sidebar-ring: #5eead4;
 
   --chart-1: #34d399;

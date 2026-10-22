@@ -17,11 +17,11 @@ const STORAGE_KEY = "rag-eval.theme";
 /**
  * What a reader who has expressed no preference sees.
  *
- * Dark, not "system". The dark palette is the designed one and the light set is
- * built to match it; defaulting to the OS would hand half of first-time
- * visitors the secondary treatment.
+ * Light, not "system". The dashboard is read for its numbers — tables, metrics,
+ * latency columns — and a light ground keeps them easiest to scan and to
+ * screenshot. Dark stays one click away in the toggle.
  */
-const DEFAULT_THEME: Theme = "dark";
+const DEFAULT_THEME: Theme = "light";
 
 /**
  * Runs before React hydrates, in a blocking script tag.
@@ -35,12 +35,10 @@ export const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var stored = localStorage.getItem(${JSON.stringify(STORAGE_KEY)});
-    // Dark unless the reader has said otherwise. This is a dark-first product;
-    // defaulting to the OS would show half of first-time visitors a light
-    // interface that was designed second.
+    // Light unless the reader has said otherwise; must match DEFAULT_THEME.
     var theme = stored === "light" || stored === "dark" || stored === "system"
       ? stored
-      : "dark";
+      : "light";
     var dark = theme === "dark" ||
       (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.classList.toggle("dark", dark);
@@ -145,7 +143,7 @@ function getResolved(): "light" | "dark" {
  * disagreement is invisible.
  */
 const serverTheme = (): Theme => DEFAULT_THEME;
-const serverResolved = (): "light" | "dark" => "dark";
+const serverResolved = (): "light" | "dark" => "light";
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const theme = useSyncExternalStore(subscribe, getTheme, serverTheme);

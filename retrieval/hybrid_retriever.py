@@ -33,10 +33,13 @@ _RRF_K = 60  # constant from the original RRF paper
 
 
 def _default_reranker() -> "BaseReranker":
-    """Imported lazily: sentence-transformers is heavy and only reranking needs it."""
-    from .reranker import CrossEncoderReranker
+    """Imported lazily: the reranker models are heavy and only reranking needs them.
 
-    return CrossEncoderReranker()
+    Which one is RERANKER_BACKEND — ColBERT unless configured otherwise.
+    """
+    from .reranker import build_reranker
+
+    return build_reranker()
 
 
 class HybridRetriever:
@@ -125,7 +128,7 @@ class HybridRetriever:
     # ------------------------------------------------------------------
 
     def _get_reranker(self):
-        """Build the cross-encoder on first use.
+        """Build the reranker on first use.
 
         Constructing it downloads and loads a model, so a deployment that never
         asks for reranking never pays that cost.
@@ -293,7 +296,7 @@ class HybridRetriever:
         top_k: int,
         reranker: bool,
     ) -> Tuple[List[RetrievalResult], List[PipelineStage]]:
-        """Run the cross-encoder if asked, and report the stage either way.
+        """Run the reranker if asked, and report the stage either way.
 
         When it does not run, no reranker stage is reported at all and
         `fill_skipped` marks it skipped — which is what the diagram greys out.
