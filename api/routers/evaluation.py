@@ -39,7 +39,7 @@ router = APIRouter(tags=["evaluation"])
 #: Configurations the benchmark matrix sweeps.
 _BENCHMARK_TOP_K = (3, 5, 10)
 _BENCHMARK_RETRIEVERS: Tuple[RetrieverMode, ...] = ("dense", "sparse", "hybrid")
-# Whether the cross-encoder earns its latency is exactly the sort of question
+# Whether the reranker earns its latency is exactly the sort of question
 # this platform exists to answer, so it is swept rather than assumed.
 _BENCHMARK_RERANKER: Tuple[bool, ...] = (False, True)
 
