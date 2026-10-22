@@ -17,7 +17,7 @@ const STAGE_DETAIL: Record<StageName, string> = {
   dense: "Vector similarity over the index",
   sparse: "Keyword matching over the corpus",
   fusion: "Reciprocal rank fusion of both rankings",
-  reranker: "Cross-encoder re-scoring",
+  reranker: "ColBERT late-interaction re-scoring",
   generation: "The LLM writes the answer",
 };
 

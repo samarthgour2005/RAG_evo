@@ -6,6 +6,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **ColBERT reranking** — the second-stage reranker is now ColBERTv2 via
+  RAGatouille (late interaction, MaxSim) instead of the ms-marco-MiniLM-L-6
+  cross-encoder. The cross-encoder stays selectable with
+  `RERANKER_BACKEND=cross-encoder`; `/config` reports the live backend. See
+  ADR 009.
+- **Lighter dashboard** — the front end opens in the light theme by default,
+  with a softer light palette (slate text on an off-white ground, white cards)
+  and a lifted, slate dark palette instead of near-black.
+
+### Added
+
+- `scripts/compare_rerankers.py` — benchmarks no reranker, the cross-encoder
+  and ColBERT on the labelled dataset: Precision@K, Recall@K, MRR, hit rate and
+  p50/p95 reranker and retrieval latency, written to
+  `docs/reranker_comparison.md` with resume bullets generated from the run.
+
+---
+
 ## [1.1.0] — 2026-08-16
 
 The platform gains a second mode. It was a dashboard over a corpus fixed at

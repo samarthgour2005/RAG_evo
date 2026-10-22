@@ -22,6 +22,16 @@ mangum>=0.17.0
 
 # Retrieval extensions
 rank-bm25>=0.2.2
+# ColBERT reranking (the default reranker). Upper-bounded: 0.0.10 drops the
+# Stanford ColBERT backend this code calls through RAGPretrainedModel.
+ragatouille>=0.0.9,<0.0.10
+# RAGatouille 0.0.9 imports langchain.retrievers at import time, a module
+# langchain 1.0 removed — without this pin `import ragatouille` fails.
+langchain>=0.3,<1
+# colbert-ai subclasses BertPreTrainedModel in a way transformers 5 no longer
+# supports (HF_ColBERT has no `all_tied_weights_keys`); loading the checkpoint
+# raises AttributeError on 5.x.
+transformers<5
 
 # Load testing
 locust>=2.20.0

@@ -1,0 +1,76 @@
+name: Reranker benchmark
+
+# ColBERT vs cross-encoder on the labelled dataset. Separate from CI: it
+# downloads both rerankers' weights and times ~2,000 reranked queries, which is
+# minutes of work that a lint fix should not wait on. It runs when the code it
+# measures changes, and on demand.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "retrieval/reranker.py"
+      - "retrieval/hybrid_retriever.py"
+      - "evaluation/reranker_comparison.py"
+      - "scripts/compare_rerankers.py"
+      - "requirements.txt"
+      - ".github/workflows/reranker-benchmark.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: "ColBERT vs cross-encoder"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.12-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.12-
+
+      - name: Cache HuggingFace model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-rerankers-bge-colbertv2-minilm
+          restore-keys: |
+            ${{ runner.os }}-hf-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the index
+        run: |
+          python scripts/build_embeddings.py
+          python scripts/build_index.py
+        env:
+          PYTHONPATH: .
+
+      # Prints the full report, resume bullets included, to the log as well as
+      # writing it, so the numbers are readable without downloading anything.
+      - name: Compare rerankers
+        run: python scripts/compare_rerankers.py --repeats 3
+        env:
+          PYTHONPATH: .
+
+      - name: Upload the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: reranker-comparison
+          path: |
+            docs/reranker_comparison.md
+            reports/reranker_comparison.json
