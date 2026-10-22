@@ -80,7 +80,7 @@ it costs.
 | Vector index | FAISS IndexFlatIP | Exact cosine search, < 1 ms at 10K vectors |
 | Sparse retrieval | BM25Okapi (rank-bm25) | Catches exact-term matches dense models miss |
 | Fusion | Reciprocal Rank Fusion (k=60) | State-of-the-art hybrid combining |
-| Re-ranking | CrossEncoder ms-marco-MiniLM-L-6 | Fine-grained relevance, 22 M params |
+| Re-ranking | ColBERTv2 via RAGatouille (cross-encoder selectable) | Token-level late interaction; cheaper than scoring every pair jointly |
 | LLM | Groq / llama-3.1-8b-instant | < 2 s TTFT, free tier for evaluation |
 | API | FastAPI | Async, auto-OpenAPI docs, streams over SSE |
 | Deployment | EC2 `t4g.small` + Docker + Caddy | 743 MB resident does not fit a 1 GB free tier; ~$17/month |
@@ -126,7 +126,7 @@ vectors.npy  faiss.index          ← offline ingestion
          ▼
      Retriever
   ┌──────┴──────────┐
-  │ FAISS (dense)   │  + BM25 (sparse) → RRF → CrossEncoder (opt-in)
+  │ FAISS (dense)   │  + BM25 (sparse) → RRF → ColBERT rerank (opt-in)
   └──────┬──────────┘
          │ RetrievalResult list
          ▼
@@ -221,6 +221,30 @@ question and K retrieved, the ceiling is roughly 1/K. Read Recall and MRR.
 
 Full matrix, method and caveats: [docs/benchmark_report.md](docs/benchmark_report.md).
 Regenerate any time with `GET /benchmarks`.
+
+The table above was measured with the cross-encoder reranker. ColBERT has since
+replaced it as the default — see below.
+
+### ColBERT vs cross-encoder reranking
+
+The reranker is ColBERTv2 (late interaction, via
+[RAGatouille](https://github.com/AnswerDotAI/RAGatouille)) by default. A
+cross-encoder reads every (query, passage) pair jointly — precise, but one full
+forward pass per candidate. ColBERT encodes query and passages separately into
+per-token vectors and scores them with MaxSim, which keeps token-level matching
+at a lower cost. The cross-encoder stays selectable with
+`RERANKER_BACKEND=cross-encoder`, so the two can be compared on the same data:
+
+```bash
+python scripts/compare_rerankers.py            # dense, sparse and hybrid; 3 timed passes
+```
+
+It runs the 53 labelled questions through no reranker, the cross-encoder and
+ColBERT over the same first-stage candidates, and writes
+`docs/reranker_comparison.md` (Precision@K, Recall@K, MRR, hit rate, p50/p95
+rerank and retrieval latency, plus resume-ready bullets generated from the
+measured numbers) and `reports/reranker_comparison.json`. See
+[ADR 009](docs/decisions/009-colbert-reranker.md) for the decision.
 
 ---
 

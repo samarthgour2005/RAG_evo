@@ -25,6 +25,15 @@ MIN_CHUNK_CHARS = 50
 SEPARATORS = ["\n## ", "\n### ", "\n\n", "\n", ". ", " ", ""]
 TOP_K = 5
 
+# Second-stage reranker. ColBERT (late interaction, via RAGatouille) replaced the
+# cross-encoder as the default; the cross-encoder stays selectable so the two can
+# be benchmarked on the same data (scripts/compare_rerankers.py).
+RERANKER_BACKEND = os.environ.get("RERANKER_BACKEND", "colbert")
+COLBERT_MODEL = os.environ.get("COLBERT_MODEL", "colbert-ir/colbertv2.0")
+CROSS_ENCODER_MODEL = os.environ.get(
+    "CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+)
+
 VECTORS_FILE = INDEX_DIR / "vectors.npy"
 METADATA_FILE = INDEX_DIR / "metadata.json"
 FAISS_INDEX_FILE = INDEX_DIR / "faiss.index"

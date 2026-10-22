@@ -23,7 +23,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     HF_HOME=/app/.cache/huggingface \
+    TORCH_EXTENSIONS_DIR=/app/.cache/torch_extensions \
     PORT=8000
+
+# The ColBERT reranker (colbert-ai, via RAGatouille) JIT-compiles a small C++
+# MaxSim kernel the first time a checkpoint loads, so the runtime image needs a
+# C++ compiler — without one the first reranked query fails. It is compiled once
+# below, at build time, so no request pays for it.
+RUN apt-get update && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 # Hugging Face Spaces runs the container as uid 1000, and container hosts
 # generally drop root. The user is created before anything is copied so each
@@ -77,7 +85,8 @@ COPY --chown=app:app scripts/      scripts/
 USER app
 RUN mkdir -p index logs && \
     python scripts/build_embeddings.py && \
-    python scripts/build_index.py
+    python scripts/build_index.py && \
+    python -c "from colbert.modeling.colbert import ColBERT; ColBERT.try_load_torch_extensions(use_gpu=False)"
 
 EXPOSE 8000
 

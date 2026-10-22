@@ -33,6 +33,7 @@ const CONFIG: ConfigResponse = {
   documents: 8,
   reranker_enabled: false,
   reranker_available: true,
+  reranker_backend: "colbert",
   default_retriever: "dense",
 };
 
@@ -57,12 +58,12 @@ const SETTINGS: SettingsResponse = {
       },
       {
         key: "reranker",
-        label: "Cross-encoder reranker",
+        label: "Reranker",
         value: "off by default",
         scope: "query",
         requires_reindex: false,
         editable_per_request: true,
-        note: "Raises MRR and adds hundreds of milliseconds. Opt in per request.",
+        note: "Raises MRR at a latency cost. Opt in per request.",
       },
     ],
     generation: [
@@ -167,7 +168,7 @@ describe("SettingsPanel", () => {
   describe("the reranker's status", () => {
     it("says what turning it on costs", async () => {
       renderPanel();
-      expect(await screen.findByText(/hundreds of milliseconds/)).toBeInTheDocument();
+      expect(await screen.findByText(/latency cost/)).toBeInTheDocument();
     });
   });
 

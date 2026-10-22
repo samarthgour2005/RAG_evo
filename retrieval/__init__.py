@@ -2,7 +2,12 @@ from .bm25_store import BM25Store
 from .faiss_store import FAISSStore
 from .hybrid_retriever import HybridRetriever
 from .ranking import RetrievalResult, RetrievalTrace, RetrieverMode, StageScore
-from .reranker import BaseReranker, CrossEncoderReranker
+from .reranker import (
+    BaseReranker,
+    ColBERTReranker,
+    CrossEncoderReranker,
+    build_reranker,
+)
 from .retriever import Retriever
 
 __all__ = [
@@ -14,6 +19,8 @@ __all__ = [
     "RetrieverMode",
     "StageScore",
     "BaseReranker",
+    "ColBERTReranker",
     "CrossEncoderReranker",
+    "build_reranker",
     "Retriever",
 ]

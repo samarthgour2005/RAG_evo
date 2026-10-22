@@ -30,6 +30,7 @@ from config.settings import (
     LLM_TEMPERATURE,
     MAX_CONTEXT_CHUNKS,
     MIN_CHUNK_CHARS,
+    RERANKER_BACKEND,
     TOP_K,
 )
 from retrieval.hybrid_retriever import HybridRetriever
@@ -72,6 +73,7 @@ async def config(
         # hundreds of milliseconds against a 300-600 ms generation step.
         reranker_enabled=False,
         reranker_available=True,
+        reranker_backend=RERANKER_BACKEND,
         default_retriever=QueryRequest.model_fields["retriever"].default,
     )
 
@@ -118,12 +120,22 @@ async def settings() -> SettingsResponse:
                 setting("top_k", "Chunks retrieved", TOP_K, "query", False, True),
                 setting(
                     "reranker",
-                    "Cross-encoder reranker",
+                    "Reranker",
                     "off by default",
                     "query",
                     False,
                     True,
-                    "Raises MRR and adds hundreds of milliseconds. Opt in per request.",
+                    "Raises MRR at a latency cost. Opt in per request.",
+                ),
+                setting(
+                    "reranker_backend",
+                    "Reranker model",
+                    RERANKER_BACKEND,
+                    "query",
+                    False,
+                    False,
+                    "colbert (ColBERTv2 via RAGatouille) or cross-encoder "
+                    "(ms-marco-MiniLM-L-6). Set with RERANKER_BACKEND.",
                 ),
             ],
             "generation": [

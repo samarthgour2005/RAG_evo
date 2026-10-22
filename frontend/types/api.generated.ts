@@ -391,15 +391,21 @@ export interface components {
             documents: number;
             /**
              * Reranker Enabled
-             * @description Whether the cross-encoder runs by default; it does not, because it costs hundreds of milliseconds for a small MRR gain
+             * @description Whether the reranker runs by default; it does not, because it costs hundreds of milliseconds for a small MRR gain
              */
             reranker_enabled: boolean;
             /**
              * Reranker Available
-             * @description Whether a request may switch the cross-encoder on
+             * @description Whether a request may switch the reranker on
              * @default true
              */
             reranker_available: boolean;
+            /**
+             * Reranker Backend
+             * @description Which reranker a request with reranker=true runs: 'colbert' (late interaction via RAGatouille) or 'cross-encoder'
+             * @default colbert
+             */
+            reranker_backend: string;
             /**
              * Default Retriever
              * @description Strategy used when a request does not choose one
@@ -658,7 +664,7 @@ export interface components {
          * @description What one stage of the pipeline did.
          *
          *     `skipped` means the stage did not run — a sparse-only query embeds nothing,
-         *     and the cross-encoder reranker is not wired into the live path. The product
+         *     and the reranker runs only when a request opts in. The product
          *     spec requires these to render differently from stages that ran, and the
          *     diagram must never animate one that did not.
          *
@@ -721,7 +727,7 @@ export interface components {
             corpus_id: string;
             /**
              * Reranker
-             * @description Run the cross-encoder over the retrieved candidates. Far more accurate per candidate and far slower — one model forward pass each — so it is opt-in and the retriever fetches a wider candidate list when it is on.
+             * @description Run the second-stage reranker (ColBERT by default, see /config) over the retrieved candidates. More accurate per candidate and slower than first-stage retrieval, so it is opt-in and the retriever fetches a wider candidate list when it is on.
              * @default false
              */
             reranker: boolean;
@@ -978,7 +984,7 @@ export interface components {
             sparse?: components["schemas"]["StageScore"] | null;
             /** @description Reciprocal Rank Fusion */
             fused?: components["schemas"]["StageScore"] | null;
-            /** @description Cross-encoder rerank */
+            /** @description Second-stage rerank (ColBERT or cross-encoder) */
             reranker?: components["schemas"]["StageScore"] | null;
         };
         /**

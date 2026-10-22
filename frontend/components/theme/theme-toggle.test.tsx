@@ -43,6 +43,18 @@ describe("ThemeToggle", () => {
     }
   });
 
+  it("defaults to light when the reader has chosen nothing", async () => {
+    // Even on an OS that prefers dark: the default is a product choice, and
+    // "system" stays available in the toggle for readers who want it.
+    setSystemDark(true);
+    renderToggle();
+
+    expect(
+      await screen.findByRole("button", { name: "Light", pressed: true }),
+    ).toBeInTheDocument();
+    expect(document.documentElement).not.toHaveClass("dark");
+  });
+
   it("applies dark mode to the document", async () => {
     renderToggle();
     await userEvent.click(screen.getByRole("button", { name: "Dark" }));

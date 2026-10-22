@@ -29,7 +29,7 @@ class PipelineStage:
     """One stage's contribution to a single request.
 
     `skipped` means the stage did not run — a sparse-only query embeds nothing,
-    and the cross-encoder is not wired into the live path at all. The product
+    and the reranker runs only when a request opts in. The product
     spec is explicit that these render differently from stages that ran, and
     that the diagram must never animate one that did not.
 

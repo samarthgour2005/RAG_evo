@@ -23,7 +23,8 @@ const STAGES = [
   { name: "Fusion", detail: "Reciprocal Rank Fusion, k = 60" },
   {
     name: "Reranker",
-    detail: "Cross-encoder ms-marco-MiniLM-L-6-v2 — opt-in per query, off by default",
+    detail:
+      "ColBERTv2 late interaction via RAGatouille (cross-encoder ms-marco-MiniLM-L-6-v2 selectable) — opt-in per query, off by default",
   },
   { name: "Generation", detail: "Groq llama-3.1-8b-instant, temperature 0" },
 ];

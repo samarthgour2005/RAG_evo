@@ -212,7 +212,7 @@ describe("RetrievalTable", () => {
         },
       });
 
-    it("shows a Reranked column when the cross-encoder ran", () => {
+    it("shows a Reranked column when the reranker ran", () => {
       // Without it the reranker is invisible in the very trace it reorders,
       // and the ranking looks like it came from the earlier stages.
       render(<RetrievalTable retriever="hybrid" sources={[reranked(1, 4.06)]} />);
@@ -228,7 +228,7 @@ describe("RetrievalTable", () => {
 
     it("reads the results, not the requested setting", () => {
       // Reranking can be asked for and still not happen. A column of dashes
-      // would report that as "the cross-encoder scored nothing".
+      // would report that as "the reranker scored nothing".
       render(<RetrievalTable retriever="dense" sources={[source()]} />);
 
       expect(screen.queryByRole("columnheader", { name: "Reranked" })).toBeNull();
@@ -239,11 +239,12 @@ describe("RetrievalTable", () => {
       render(<RetrievalTable retriever="hybrid" sources={[reranked(1, 4.06)]} />);
 
       expect(screen.queryByText(/reranker did not run/i)).toBeNull();
-      expect(screen.getByText(/cross-encoder's order/i)).toBeInTheDocument();
+      expect(screen.getByText(/reranker's order/i)).toBeInTheDocument();
     });
 
-    it("shows a negative cross-encoder score as it is", () => {
-      // These are logits, not probabilities, and are routinely negative.
+    it("shows a negative reranker score as it is", () => {
+      // Cross-encoder scores are logits, not probabilities, and are routinely
+      // negative; the cross-encoder is still a selectable backend.
       render(<RetrievalTable retriever="dense" sources={[reranked(3, -8.94)]} />);
 
       expect(screen.getByText("-8.94")).toBeInTheDocument();
