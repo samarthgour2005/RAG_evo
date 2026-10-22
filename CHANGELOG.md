@@ -1,0 +1,277 @@
+# Changelog
+
+All notable changes to this project are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.1.0] — 2026-08-16
+
+The platform gains a second mode. It was a dashboard over a corpus fixed at
+build time; a user can now upload their own documents and query them, through
+the same retriever the Evaluation Lab benchmarks.
+
+### Added
+
+- **Document ingestion** — `POST /documents` returns **202 Accepted** and queues
+  the work. Parsing, chunking, embedding and indexing run on a worker
+  (`jobs/indexer.py`), never in the request. PDF, TXT and Markdown.
+- **Document management** — `GET /documents`, `GET /documents/{id}`,
+  `GET /documents/{id}/status`, `DELETE /documents/{id}`. Eight lifecycle
+  states from UPLOADING to READY, with per-stage progress and the failure
+  reason when there is one. Deletion is real: chunks leave the index, not just
+  the list.
+- **Corpus isolation** — every chunk carries a `corpus_id`, and retrieval is
+  scoped to one. Uploads are refused into the benchmark corpus, so a published
+  metric cannot move because somebody uploaded a file.
+- **Job queue** — in-process by default, Redis when configured. Startup requeues
+  documents a restart stranded mid-pipeline.
+- **Workspace UI** — drag-and-drop upload, live indexing stages, per-document
+  timings, and a link straight to querying the corpus.
+- **Query UI** — corpus selector, retriever, top-K and reranker as query-time
+  controls, with sources and a retrieval trace that reports the stages that
+  actually ran. A skipped reranker says "did not run" rather than going quiet.
+- **Evaluation Lab** — the existing evaluation surface, plus per-question
+  failures, worst-ranked questions and p50/p95 latency alongside the mean.
+- **Benchmark comparison** — sortable matrix and a recommended configuration
+  that states the latency it costs instead of naming a winner.
+- **Themes** — light, dark and system, persisted.
+- **Design system** — 15 shared primitives under `frontend/components/ui/`.
+- **Testing** — 666 Python tests (94% coverage), 359 frontend unit tests, and 5
+  Playwright end-to-end tests covering upload → READY → query → trace → delete
+  against a real API and index.
+- **Lint gate** — ruff and black configured in `pyproject.toml` and enforced by
+  their own CI job, with pinned versions.
+- **Frontend CI job** — `npm ci`, typecheck, lint, format check, the 359 unit
+  tests and the production build now run on every push, instead of depending on
+  somebody remembering `npm run verify`.
+- **`.gitattributes`** — line endings normalised to LF. Git for Windows checks
+  out CRLF by default, which failed `prettier --check` on 108 files in an
+  untouched clone and made an editor's save look like a 1,200-line diff.
+
+### Fixed
+
+- **`python-multipart` was never declared**, so CI had been red since the upload
+  endpoint landed. FastAPI raises when it *builds* a route declaring
+  `UploadFile`, so collection aborted and every API test errored. A test now
+  reads `requirements.txt`, because an installed-but-undeclared package is
+  invisible to every other check.
+- **`GET /settings` required a Groq key.** It declared a `RAGService` dependency
+  it never used, so a deployment without `GROQ_API_KEY` got a 503 from the one
+  page that explains how the deployment is configured.
+- **CORS refused `DELETE`**, which had broken document deletion in every browser
+  while every unit test passed. The allowlist is now derived from the app's own
+  routes.
+- **Leaked SQLite connections** — `DocumentRepository` cached one per thread and
+  closed none, at 211 ResourceWarnings per run. It is now a context manager, app
+  shutdown closes it, and `pytest` errors on `unclosed database`.
+- **A shadowed test class** — the last 82 lines of `test_chunking.py` duplicated
+  the preceding 82, so one copy never ran.
+- **Undefined forward reference** — `DocumentSplitter.from_config` was annotated
+  with a quoted `"ChunkingConfig"` that was never imported.
+- **The retrieval surface required a Groq key.** `/config`, `/evaluation` and
+  `/benchmarks` each resolved a `RAGService` to reach its retriever, and
+  building one constructs the Groq client — so all three answered 503 without
+  `GROQ_API_KEY`, while `/evaluation`'s own description says "No LLM calls are
+  made". They depend on a retriever now, which is what they use.
+- **A document deleted while indexing stayed searchable.** DELETE removes the
+  chunks in the index at that moment; a job already in flight writes its chunks
+  afterwards. Deleting during PARSING left 13 chunks against 0 document
+  records. The worker re-checks the record after writing and discards the
+  chunks if it has gone.
+- **A deleted document's file stayed on disk** when the indexer still held it
+  open — which Windows refuses to unlink — while the response claimed
+  "Document, file and chunks removed" regardless. The reply now reports
+  `file_removed`, and the worker clears the file as it finishes.
+- **Log rotation raced with itself.** All 33 modules were given their own
+  `RotatingFileHandler` over one path.
+
+### Changed
+
+- **One embedding model per process.** Every retriever and the indexing worker
+  built its own `Embedder`; a process serving eight corpora held eight identical
+  copies of bge-small. `shared_embedder()` is cached by model and device.
+- **Chunking configuration** is now an object (`ChunkingConfig`) and is
+  explicitly indexing-time — the API and the UI both say that changing it
+  requires a re-index, rather than offering it beside top-K.
+- **Indexing timings** are stored on the document and shown in the workspace,
+  instead of only reaching a server log.
+
+### Deployed
+
+- **Live at <https://rag-evaluation-rosy.vercel.app>**, front end on Vercel.
+- **API at <https://vikas-rag.duckdns.org>** — one EC2 `t4g.small` (2 vCPU
+  Graviton, 2 GiB) running Docker behind Caddy, with a Let's Encrypt certificate
+  on a DuckDNS subdomain. The benchmark corpus and the model weights are built
+  into the image, so a cold start loads from local disk rather than downloading
+  130 MB and re-indexing.
+- **Sized on a measurement, not a guess.** The API holds 743 MB resident with
+  the model and index loaded, which rules out every 1 GB free-tier instance and
+  rules out Render's free plan at 512 MB. ~$17/month, and the retrieval core is
+  untouched — the alternative was replacing PyTorch with ONNX to fit a smaller
+  box, which is surgery on the component every published metric depends on.
+- **Uploads persist here.** The EBS volume is real storage, so
+  `STORAGE_EPHEMERAL` is `0` and the workspace does not show its
+  temporary-storage warning — on this deployment that would be false.
+- **The deployment reproduces the numbers.** Precision@5 0.2000, Recall@5
+  0.9623, hit rate 0.9623, MRR 0.8780 — identical to local. Retrieval latency is
+  not identical and should not be: p50 48 ms against 27 ms, because two Graviton
+  cores are not a desktop CPU.
+
+### Unchanged
+
+Retrieval quality. Precision@5 (0.2000), Recall@5 (0.9623), hit rate (0.9623)
+and MRR (0.8780) are identical to the pre-change baseline, and three further
+configurations reproduce [the benchmark report](docs/benchmark_report.md) to the
+digit. See [docs/baseline.md](docs/baseline.md).
+
+---
+
+## [1.0.0] — 2026-07-10
+
+### Phase 8 — Production Grade
+
+#### Added
+- **GitHub Actions CI** — tests run on Python 3.11 and 3.12 on every push/PR;
+  HuggingFace model cache is persisted across runs; coverage uploaded to Codecov
+- **Docker** — multi-stage `Dockerfile` (builder → runtime); `docker-compose.yml`
+  for one-command local deployment with bind-mounted index volume
+- **OpenAPI documentation** — endpoint summaries, descriptions, request/response
+  examples, and explicit error response codes in all FastAPI routers
+- **Architecture documentation** — `docs/architecture.md` with ASCII diagrams for
+  query-time, ingestion, hybrid retrieval, and AWS deployment flows
+- **Architecture Decision Records** — seven ADRs in `docs/decisions/` covering
+  parser choice, chunking strategy, embedding model, FAISS, provider abstractions,
+  evaluation design, and Lambda deployment rationale
+- **Hybrid retrieval (BM25 + FAISS)** — `retrieval/bm25_store.py` (BM25Okapi) and
+  `retrieval/hybrid_retriever.py` (Reciprocal Rank Fusion, k=60)
+- **Cross-encoder re-ranking** — `retrieval/reranker.py` (`BaseReranker` ABC +
+  `CrossEncoderReranker` using ms-marco-MiniLM-L-6-v2)
+- **Streaming responses** — `BaseGenerator.stream()` interface; `GroqGenerator.stream()`
+  implementation; `POST /stream` SSE endpoint; `RAGService.stream()` yields typed events
+- **Incremental index updates** — `VectorStorage.append()` adds new chunks without
+  rebuilding the full index
+- **Performance benchmarking** — `scripts/benchmark_performance.py` measures per-stage
+  latency (embed, retrieve, BM25); outputs `reports/benchmark.json`
+- **Load testing** — `load_tests/locustfile.py` simulates concurrent users hitting
+  `/query`, `/health`, and `/metrics`
+- **`pyproject.toml`** — unified pytest and coverage configuration
+- **README 2.0** — overview table, architecture diagram, evaluation results, real
+  performance numbers, API examples, deployment guide, project structure, ADR index
+
+#### Changed
+- `api/schemas.py` — added Pydantic `json_schema_extra` examples on all models
+- `api/routers/health.py`, `query.py` — added `summary`, `description`, `responses`
+  metadata for OpenAPI
+- `api/app.py` — added `openapi_tags`, streaming router, richer description
+- `retrieval/__init__.py` — exports `BM25Store`, `HybridRetriever`, `BaseReranker`,
+  `CrossEncoderReranker`
+- `generation/generator.py` — added `BaseGenerator.stream()` (raises
+  `NotImplementedError` by default) and `GroqGenerator.stream()` implementation
+- `services/rag_service.py` — added `RAGService.stream()` that yields SSE event dicts
+- `requirements.txt` — added `rank-bm25>=0.2.2`, `locust>=2.20.0`
+
+#### Tests
+- `tests/test_bm25_store.py` — 13 tests for BM25Store (init, search, edge cases)
+- `tests/test_hybrid_retriever.py` — 8 tests for RRF fusion correctness
+- `tests/test_reranker.py` — 7 tests for CrossEncoderReranker (mocked model)
+- `tests/test_stream.py` — 11 tests for SSE streaming endpoint
+- `tests/test_incremental.py` — 9 tests for VectorStorage.append + FAISSStore.add
+
+**Total: 289 tests | Coverage: 87%**
+
+---
+
+## [0.7.0] — 2026-07-09
+
+### Phase 7 — Production API & AWS Deployment
+
+#### Added
+- `services/rag_service.py` — `RAGService` orchestrates retrieval + generation,
+  tracks in-process metrics (queries, latencies, errors)
+- `api/schemas.py` — Pydantic v2 `QueryRequest` / `QueryResponse` / `SourceInfo`
+- `api/dependencies.py` — `lru_cache` singleton loader; 503 on missing index / key
+- `api/routers/health.py` — `GET /health`, `GET /metrics`
+- `api/routers/query.py` — `POST /query` with 400/500/503/504 error mapping
+- `api/app.py` — `create_app()` factory + module-level `app`
+- `aws/lambda_handler.py` — Mangum ASGI adapter (`lifespan="off"`)
+- `aws/template.yaml` — SAM template; HTTP API Gateway; SSM-backed `GROQ_API_KEY`
+- `tests/test_api.py` — 29 tests covering success, validation, and error paths
+
+**Total: 240 tests**
+
+---
+
+## [0.6.0] — 2026-07-09
+
+### Phase 6 — Evaluation Pipeline
+
+#### Added
+- `evaluation/metrics.py` — pure functions: Precision@K, Recall@K, Hit Rate, MRR,
+  cosine similarity, MRR
+- `evaluation/dataset.py` — `BenchmarkSample`, `DatasetLoader`
+- `evaluation/retrieval_evaluator.py` — per-sample and aggregate retrieval metrics
+- `evaluation/generation_evaluator.py` — semantic similarity, LLM-as-judge faithfulness
+- `evaluation/benchmark.py` — `BenchmarkRunner`, `ExperimentRunner`
+- `evaluation/report.py` — CSV (per-question) and Markdown summary reports
+- `evaluation/dataset.json` — 15-question ground-truth dataset
+- `scripts/evaluate.py` — CLI script; degrades gracefully without `GROQ_API_KEY`
+
+---
+
+## [0.5.0] — 2026-07-08
+
+### Phase 5 — Generation Pipeline
+
+#### Added
+- `generation/models.py` — `Prompt`, `GenerationResponse` dataclasses
+- `generation/prompt_builder.py` — `PromptBuilder`; `[Source N]` context format
+- `generation/generator.py` — `BaseGenerator` ABC; `GroqGenerator` with exponential
+  backoff retries on rate-limit and timeout errors
+
+---
+
+## [0.4.0] — 2026-07-07
+
+### Phase 4 — FAISS Retrieval
+
+#### Added
+- `retrieval/faiss_store.py` — `FAISSStore` (IndexFlatIP, L2-normalised)
+- `retrieval/ranking.py` — `RetrievalResult` dataclass
+- `retrieval/retriever.py` — `Retriever.from_disk()` factory
+
+---
+
+## [0.3.0] — 2026-07-06
+
+### Phase 3 — Embeddings
+
+#### Added
+- `embeddings/embedder.py` — `Embedder` (bge-small-en-v1.5, batch inference)
+- `embeddings/service.py` — `EmbeddingService`
+- `embeddings/storage.py` — `VectorStorage` (vectors.npy + metadata.json)
+
+---
+
+## [0.2.0] — 2026-07-05
+
+### Phase 2 — Chunking Pipeline
+
+#### Added
+- `chunking/chunk.py` — `Chunk` dataclass
+- `chunking/splitter.py` — `DocumentSplitter` (RecursiveCharacterTextSplitter)
+
+---
+
+## [0.1.0] — 2026-07-04
+
+### Phase 1 — Document Ingestion
+
+#### Added
+- `ingestion/document.py` — `Document` dataclass
+- `ingestion/parser.py` — `BaseParser` ABC, `PyMuPDFParser`, `PlainTextParser`
+- `ingestion/loader.py` — `DocumentLoader` with extension-keyed registry
+- `ingestion/cleaner.py` — `DocumentCleaner`
+- `config/settings.py` — central configuration
+- `config/logging_config.py` — rotating file + console logger

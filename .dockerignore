@@ -1,0 +1,26 @@
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.coverage
+coverage.xml
+*.egg-info
+
+# Never bake secrets into the image
+.env
+*.env
+
+# Large artefacts — the index is built during the image build, not copied in,
+# so a stale local one cannot be shipped by accident.
+index/
+reports/
+logs/
+
+# Dev and test files not needed in production image
+tests/
+load_tests/
+docs/
+.coveragerc
+pyproject.toml
