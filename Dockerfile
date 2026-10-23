@@ -39,7 +39,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # MaxSim kernel the first time a checkpoint loads, so the runtime image needs a
 # C++ compiler — without one the first reranked query fails. It is compiled once
 # below, at build time, so no request pays for it.
-RUN apt-get update && apt-get install -y --no-install-recommends g++ \
+# git is there because colbert-ai imports GitPython at package import time
+# (colbert/infra/config/base_config.py -> utility.utils.save_metadata), and
+# GitPython raises ImportError when no git executable is on PATH. CI runners
+# have git, which is why only the image build saw it; installing it, rather
+# than silencing GitPython, also covers the code paths that actually call git.
+RUN apt-get update && apt-get install -y --no-install-recommends g++ git \
     && rm -rf /var/lib/apt/lists/*
 
 # Hugging Face Spaces runs the container as uid 1000, and container hosts
