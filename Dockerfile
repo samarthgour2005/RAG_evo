@@ -11,7 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# CPU-only torch, installed first from PyTorch's CPU index. From PyPI, recent
+# torch on Linux (x86_64 and aarch64 alike) is the CUDA build plus several GB of
+# nvidia-* wheels this image never uses, which is what fills a 20 GB EBS volume
+# or gets the build killed on a 2 GiB instance. PYTHONPATH makes the prefix
+# visible to the second install, so pip sees torch as satisfied and does not
+# fetch the CUDA build from PyPI on top of it.
+ENV PYTHONPATH=/install/lib/python3.12/site-packages
+RUN pip install --no-cache-dir --prefix=/install \
+    --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # --------------------------------------------------------------------------
 # Stage 2 — runtime: lean image with just what the app needs
