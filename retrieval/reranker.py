@@ -23,6 +23,7 @@ cross-encoder stays selectable because the swap is only justified by measuring
 both on the same data — see ``scripts/compare_rerankers.py``.
 """
 
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import replace
@@ -231,12 +232,49 @@ class ColBERTReranker(BaseReranker):
         return reranked
 
 
+# Model construction goes through one lock. transformers builds a model on
+# the meta device and then loads weights into it, and that machinery is not
+# safe to run from two threads at once: on the live deployment a benchmark
+# sweep and a query each loaded ColBERT concurrently, in FastAPI's threadpool,
+# and the loser failed in ``model.to()`` with "Cannot copy out of meta tensor".
+_LOAD_LOCK = threading.RLock()
+_shared: Dict[str, BaseReranker] = {}
+
+
 def build_reranker(backend: str = RERANKER_BACKEND) -> BaseReranker:
     """Construct the reranker a backend name refers to."""
-    if backend == "colbert":
-        return ColBERTReranker()
-    if backend == "cross-encoder":
-        return CrossEncoderReranker()
+    with _LOAD_LOCK:
+        if backend == "colbert":
+            return ColBERTReranker()
+        if backend == "cross-encoder":
+            return CrossEncoderReranker()
     raise ValueError(
         f"Unknown reranker backend {backend!r}; expected one of {RERANKER_BACKENDS}"
     )
+
+
+def shared_reranker(backend: str = RERANKER_BACKEND) -> BaseReranker:
+    """The process-wide reranker for ``backend``, built once.
+
+    Every corpus's retriever asks for one, and building one per corpus would
+    load the same ~440 MB ColBERT checkpoint once per corpus. The passage cache
+    is keyed by text, so sharing it across corpora is safe.
+
+    If ColBERT cannot load, the cross-encoder serves instead of every reranked
+    request failing with a 500. Loud, not silent: the failure is logged with
+    its traceback, and the reranker's ``backend`` says which one is live.
+    """
+    with _LOAD_LOCK:
+        if backend not in _shared:
+            try:
+                _shared[backend] = build_reranker(backend)
+            except Exception:
+                if backend != "colbert":
+                    raise
+                logger.exception(
+                    "ColBERT reranker failed to load — falling back to the "
+                    "cross-encoder. Set RERANKER_BACKEND=cross-encoder to skip "
+                    "the attempt."
+                )
+                _shared[backend] = build_reranker("cross-encoder")
+        return _shared[backend]
