@@ -35,11 +35,13 @@ _RRF_K = 60  # constant from the original RRF paper
 def _default_reranker() -> "BaseReranker":
     """Imported lazily: the reranker models are heavy and only reranking needs them.
 
-    Which one is RERANKER_BACKEND — ColBERT unless configured otherwise.
+    Which one is RERANKER_BACKEND — ColBERT unless configured otherwise. One
+    instance is shared by every corpus, and a ColBERT that fails to load falls
+    back to the cross-encoder (see ``shared_reranker``).
     """
-    from .reranker import build_reranker
+    from .reranker import shared_reranker
 
-    return build_reranker()
+    return shared_reranker()
 
 
 class HybridRetriever:
