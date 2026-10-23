@@ -13,6 +13,7 @@ from retrieval.reranker import (
     ColBERTReranker,
     CrossEncoderReranker,
     build_reranker,
+    shared_reranker,
 )
 
 # ---------------------------------------------------------------------------
@@ -261,3 +262,61 @@ class TestBuildReranker:
         from config.settings import RERANKER_BACKEND
 
         assert RERANKER_BACKEND == "colbert"
+
+
+class TestSharedReranker:
+    @pytest.fixture(autouse=True)
+    def _empty_cache(self):
+        from retrieval import reranker as module
+
+        module._shared.clear()
+        yield
+        module._shared.clear()
+
+    def test_built_once_and_shared(self):
+        with patch("retrieval.reranker.ColBERTReranker") as cls:
+            first = shared_reranker("colbert")
+            assert shared_reranker("colbert") is first
+        cls.assert_called_once_with()
+
+    def test_colbert_load_failure_falls_back_to_cross_encoder(self):
+        with (
+            patch(
+                "retrieval.reranker.ColBERTReranker",
+                side_effect=NotImplementedError("Cannot copy out of meta tensor"),
+            ),
+            patch("retrieval.reranker.CrossEncoderReranker") as cross,
+        ):
+            assert shared_reranker("colbert") is cross.return_value
+
+    def test_cross_encoder_failure_is_not_swallowed(self):
+        with patch(
+            "retrieval.reranker.CrossEncoderReranker", side_effect=OSError("no weights")
+        ):
+            with pytest.raises(OSError):
+                shared_reranker("cross-encoder")
+
+    def test_concurrent_callers_build_one_model(self):
+        import threading
+        import time
+
+        started = []
+
+        def slow_build():
+            started.append(1)
+            time.sleep(0.05)
+            return MagicMock()
+
+        with patch("retrieval.reranker.ColBERTReranker", side_effect=slow_build):
+            got = []
+            threads = [
+                threading.Thread(target=lambda: got.append(shared_reranker("colbert")))
+                for _ in range(4)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert len(started) == 1
+        assert len({id(r) for r in got}) == 1

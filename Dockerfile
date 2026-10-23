@@ -102,6 +102,15 @@ RUN mkdir -p index logs && \
     python scripts/build_index.py && \
     python -c "from colbert.modeling.colbert import ColBERT; ColBERT.try_load_torch_extensions(use_gpu=False)"
 
+# Load the ColBERT checkpoint once, the way the API does. This bakes its
+# ~440 MB of weights into the image, so the first reranked query does not
+# download them, and it shows in the build log whether this image's
+# torch/transformers can load ColBERT at all. Not fatal: if it cannot, the API
+# falls back to the cross-encoder (retrieval.reranker.shared_reranker).
+RUN python -c "from retrieval.reranker import ColBERTReranker; ColBERTReranker()" \
+    && echo "ColBERT checkpoint loads" \
+    || echo "WARNING: ColBERT failed to load in this image; the API will fall back to the cross-encoder"
+
 EXPOSE 8000
 
 # Shell form so $PORT is expanded: Spaces and most PaaS hosts inject their own.
